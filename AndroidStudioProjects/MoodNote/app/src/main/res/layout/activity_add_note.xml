@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".AddNoteActivity">
+
+    <TextView
+        android:id="@+id/TVDateTitleAdd"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="25dp"
+        android:layout_marginTop="20dp"
+        android:fontFamily="sans-serif-condensed-medium"
+        android:text="Date"
+        android:textColor="#000000"
+        android:textSize="20sp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/TVNoteTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="40dp"
+        android:fontFamily="sans-serif-condensed-medium"
+        android:text="Note"
+        android:textColor="#000000"
+        android:textSize="20sp"
+        app:layout_constraintStart_toStartOf="@+id/TVDayNightTitle"
+        app:layout_constraintTop_toBottomOf="@+id/TVDayNightTitle" />
+
+    <TextView
+        android:id="@+id/TVMoodTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="50dp"
+        android:fontFamily="sans-serif-condensed-medium"
+        android:text="Mood"
+        android:textColor="#000000"
+        android:textSize="20sp"
+        app:layout_constraintStart_toStartOf="@+id/TVDateTitleAdd"
+        app:layout_constraintTop_toBottomOf="@+id/TVDateTitleAdd" />
+
+    <TextView
+        android:id="@+id/TVDayNightTitle"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:layout_marginTop="40dp"
+        android:fontFamily="sans-serif-condensed-medium"
+        android:text="Day/Night"
+        android:textColor="#000000"
+        android:textSize="20sp"
+        app:layout_constraintStart_toStartOf="@+id/TVMoodTitle"
+        app:layout_constraintTop_toBottomOf="@+id/TVMoodTitle" />
+
+    <EditText
+        android:id="@+id/ETDate"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="60dp"
+        android:layout_marginTop="15dp"
+        android:ems="10"
+        android:hint="12.12.2022"
+        android:inputType="date"
+        android:minHeight="48dp"
+        app:layout_constraintStart_toEndOf="@+id/TVDateTitleAdd"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <EditText
+        android:id="@+id/ETNote"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="15dp"
+        android:ems="10"
+        android:gravity="start|top"
+        android:hint="How are you feeling?"
+        android:inputType="textMultiLine"
+        android:minHeight="48dp"
+        app:layout_constraintStart_toStartOf="@+id/ETDate"
+        app:layout_constraintTop_toBottomOf="@+id/RBDayNight" />
+
+    <Button
+        android:id="@+id/BtnSave"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="@dimen/big_padding"
+        android:layout_marginTop="50dp"
+        android:background="@color/purple_200"
+        android:text="@string/button_save"
+        android:textColor="@color/black"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/ETNote" />
+
+    <RadioGroup
+        android:id="@+id/RGMood"
+        android:layout_width="205dp"
+        android:layout_height="46dp"
+        android:layout_marginTop="20dp"
+        android:orientation="horizontal"
+        app:layout_constraintStart_toStartOf="@+id/ETDate"
+        app:layout_constraintTop_toBottomOf="@+id/ETDate">
+
+        <RadioButton
+            android:id="@+id/RBHappy"
+            android:layout_width="60dp"
+            android:layout_height="30dp"
+            android:drawableStart="@drawable/happy"
+            tools:ignore="TouchTargetSizeCheck" />
+
+        <RadioButton
+            android:id="@+id/RBNeutral"
+            android:layout_width="60dp"
+            android:layout_height="30dp"
+            android:layout_marginStart="10dp"
+            android:drawableLeft="@drawable/angry"
+
+            tools:ignore="TouchTargetSizeCheck" />
+
+        <RadioButton
+            android:id="@+id/RBUnhappy"
+            android:layout_width="60dp"
+            android:layout_height="30dp"
+            android:layout_marginStart="10dp"
+            android:drawableLeft="@drawable/sad"
+            tools:ignore="TouchTargetSizeCheck" />
+    </RadioGroup>
+
+    <RadioGroup
+        android:id="@+id/RBDayNight"
+        android:layout_width="164dp"
+        android:layout_height="59dp"
+        android:layout_marginTop="15dp"
+        android:orientation="horizontal"
+        app:layout_constraintStart_toStartOf="@+id/ETDate"
+        app:layout_constraintTop_toBottomOf="@+id/RGMood">
+
+        <RadioButton
+            android:id="@+id/RBDay"
+            android:layout_width="70dp"
+            android:layout_height="40dp"
+
+
+            android:drawableLeft="@drawable/day" />
+
+        <RadioButton
+            android:id="@+id/RBNight"
+            android:layout_width="70dp"
+            android:layout_height="40dp"
+
+            android:drawableLeft="@drawable/night" />
+    </RadioGroup>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
