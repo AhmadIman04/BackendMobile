@@ -49,7 +49,7 @@ class Content(BaseModel):
   sodium_g: str
 
 class LoginRequest(BaseModel):
-    dremail: str
+    email: str
     password: str
 
 
@@ -57,7 +57,7 @@ class LoginRequest(BaseModel):
 
 app = FastAPI()
 
-cred = credentials.Certificate("C:\\Users\\Hafiz\\AndroidStudioProjects\\goon\\backend\\credentials.json")
+cred = credentials.Certificate("credentials.json")
 firebase_admin.initialize_app(cred, {
             'databaseURL': 'https://ellm-hackathon-default-rtdb.asia-southeast1.firebasedatabase.app/'
 })
@@ -177,6 +177,7 @@ async def login_patient(req: LoginRequest):
 
 
 class SignUpPatient(BaseModel):
+    age: int
     email : str
     name: str
     password : str
@@ -205,9 +206,12 @@ async def signup_pat(req: SignUpPatient):
         return {"success":False, "message":"Registration Invalid"}
     
     new_pat = {
-        "Name":req.name,
+        "Age":req.age,
         "Email":req.email,
-        "PatientID":pat_id
+        "HealthCondition":"",
+        "PatientName":req.name,
+        "PatientID":pat_id,
+        "patient_status":""
     }
 
     table_ref.push(new_pat)
