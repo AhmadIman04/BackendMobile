@@ -37,8 +37,19 @@ class AIResponse(BaseModel):
     message: str
     
 class ImageAIResponse(BaseModel):
-    message: str
-    original_filename: str
+    food: str
+    calories_kcal: str
+    sugar_g: str
+    fat_g: str
+    sodium_g: str
+
+class Content(BaseModel):
+  food: str
+  calories_kcal: str
+  sugar_g: str
+  fat_g: str
+  sodium_g: str
+
 
 
 
