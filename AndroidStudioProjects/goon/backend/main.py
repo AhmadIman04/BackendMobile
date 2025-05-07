@@ -8,6 +8,7 @@ import PIL.Image # For image handling with Gemini Vision
 import io
 import firebase_admin
 from firebase_admin import db,credentials
+import pandas as pd
 
 # Load environment variables (optional, but good practice for API keys)
 load_dotenv()
@@ -37,11 +38,8 @@ class AIResponse(BaseModel):
     message: str
     
 class ImageAIResponse(BaseModel):
-    food: str
-    calories_kcal: str
-    sugar_g: str
-    fat_g: str
-    sodium_g: str
+    message: str
+    original_filename: str
 
 class Content(BaseModel):
   food: str
@@ -50,10 +48,19 @@ class Content(BaseModel):
   fat_g: str
   sodium_g: str
 
+class LoginRequest(BaseModel):
+    dremail: str
+    password: str
+
 
 
 
 app = FastAPI()
+
+cred = credentials.Certificate("C:\\Users\\Hafiz\\AndroidStudioProjects\\goon\\backend\\credentials.json")
+firebase_admin.initialize_app(cred, {
+            'databaseURL': 'https://ellm-hackathon-default-rtdb.asia-southeast1.firebasedatabase.app/'
+})
 
 
 app.add_middleware(
@@ -86,7 +93,7 @@ async def handle_chat(chat_message: ChatMessage):
              return AIResponse(message=f"Content blocked: {e.prompt_feedback.block_reason.name}")
         raise HTTPException(status_code=500, detail=f"Error processing chat: {str(e)}")
 
-@app.post("/upload-image", response_model=ImageAIResponse)
+@app.post("/upload_image_and_ask", response_model=ImageAIResponse)
 async def upload_image_and_ask(
     file: UploadFile = File(...),
     prompt: str = Form("Analyze the image and format answer in the following json format:Food,calories(kcal), fat(g), sodium(g), sugar(g)") # Optional prompt from frontend
@@ -106,7 +113,11 @@ async def upload_image_and_ask(
         
         prompt_parts = [prompt, img]
 
-        response = text_model.generate_content(prompt_parts)
+        response = text_model.generate_content(prompt_parts,
+                                               generation_config={
+        "response_mime_type": "application/json",
+    }
+                                               )
         
         print(f"Gemini vision response: {response.text}")
         return ImageAIResponse(message=response.text, original_filename=file.filename)
@@ -126,11 +137,7 @@ async def reset_chat_history():
 @app.get("/get-data")
 async def get_data():
     try:
-        # Initialize Firebase Admin SDK
-        cred = credentials.Certificate("credentials.json")
-        firebase_admin.initialize_app(cred, {
-            'databaseURL': 'https://ellm-hackathon-default-rtdb.asia-southeast1.firebasedatabase.app/'
-        })
+
 
         patient_ref = db.reference('patient_intake')
 
@@ -140,4 +147,69 @@ async def get_data():
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing get_data: {str(e)}")
+
+@app.post("/login_patient")
+async def login_patient(req: LoginRequest):
+
+    # 3a) Fetch patient_table
+    table_ref = db.reference('pat_table')
+    raw = table_ref.get()
+
+    if isinstance(raw, dict):
+        records = list(raw.values())
+    elif isinstance(raw, list):
+        records = raw
+    else:
+        records = []
+
+    # 3) Turn into DataFrame
+    df = pd.DataFrame(records)
+
+    # 3) Check if doctor exists and password is correct
+    patient_row = df[df["Email"] == req.patemail]
+    if not patient_row.empty and req.password == "123":
+        # Convert the matching row to a dictionary
+        patient_data = patient_row.iloc[0].to_dict()
+        return {"success": True, **patient_data}
+    else:
+        return {"success": False}
+    
+
+
+class SignUpPatient(BaseModel):
+    email : str
+    name: str
+    password : str
+
+
+@app.post("/signup_pat")
+async def signup_pat(req: SignUpPatient):
+    table_ref = db.reference('pat_table')
+    raw = table_ref.get()
+
+    if isinstance(raw, dict):
+        records = list(raw.values())
+    elif isinstance(raw, list):
+        records = raw
+    else:
+        records = []
+
+
+    # 3) Turn into DataFrame
+    df = pd.DataFrame(records)
+    list_email = df["Email"].tolist()
+
+    pat_id = int(df["PatientID"].max()) + 1
+
+    if req.email in list_email :
+        return {"success":False, "message":"Registration Invalid"}
+    
+    new_pat = {
+        "Name":req.name,
+        "Email":req.email,
+        "PatientID":pat_id
+    }
+
+    table_ref.push(new_pat)
+    return {"success": True, "message": "Patient registered successfully!"}
 
