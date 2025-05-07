@@ -78,7 +78,7 @@ async def handle_chat(chat_message: ChatMessage):
 @app.post("/upload-image", response_model=ImageAIResponse)
 async def upload_image_and_ask(
     file: UploadFile = File(...),
-    prompt: str = Form("Describe this image in detail.") # Optional prompt from frontend
+    prompt: str = Form("Analyze the image and format answer in the following json format:Food,calories(kcal), fat(g), sodium(g), sugar(g)") # Optional prompt from frontend
 ):
     try:
         print(f"Received image: {file.filename}, prompt: {prompt}")
@@ -86,9 +86,13 @@ async def upload_image_and_ask(
         
         # Prepare image for Gemini Vision
         img = PIL.Image.open(io.BytesIO(contents))
+
+        prompt = f"""
+            Analyze the image and format answer in the following json format:
+            Food,calories(kcal), fat(g), sodium(g), sugar(g)
+
+        """
         
-        # Construct the prompt for Gemini Vision
-        # You can customize this. If no specific prompt is given, it describes the image.
         prompt_parts = [prompt, img]
 
         response = text_model.generate_content(prompt_parts)
