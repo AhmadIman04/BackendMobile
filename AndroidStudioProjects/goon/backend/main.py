@@ -1,7 +1,10 @@
 import os
+import requests
 import google.generativeai as genai
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional, List, Dict, Any # For Gemini parts
+
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import PIL.Image # For image handling with Gemini Vision
@@ -9,6 +12,10 @@ import io
 import firebase_admin
 from firebase_admin import db,credentials
 import pandas as pd
+import re
+import json
+from datetime import datetime, date
+import base64
 
 # Load environment variables (optional, but good practice for API keys)
 load_dotenv()
@@ -32,7 +39,9 @@ chat_session = text_model.start_chat(history=[]) # Maintain chat history for con
 
 # --- Pydantic Models for Request/Response ---
 class ChatMessage(BaseModel):
-    message: str
+    message: str  # Text prompt is mandatory
+    image_base64: Optional[str] = None
+    image_mime_type: Optional[str] = None
 
 class AIResponse(BaseModel):
     message: str
@@ -62,10 +71,16 @@ firebase_admin.initialize_app(cred, {
             'databaseURL': 'https://ellm-hackathon-default-rtdb.asia-southeast1.firebasedatabase.app/'
 })
 
+origins = [
+    "http://localhost:8081",  # Your React Native web app development server
+    "http://localhost",       # Sometimes useful if accessing from localhost without port
+    # Add any other origins you need (e.g., your deployed frontend URL)
+]
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Or restrict to your frontend's origin in production
+    allow_origins=origins, # Or restrict to your frontend's origin in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -79,24 +94,183 @@ async def root():
 @app.post("/chat", response_model=AIResponse)
 async def handle_chat(chat_message: ChatMessage):
     try:
-        print(f"Received message: {chat_message.message}")
+        print(f"Received message: '{chat_message.message}'")
+        if chat_message.image_base64 and chat_message.image_mime_type:
+            print(f"Received image of type: {chat_message.image_mime_type} (length: {len(chat_message.image_base64)})")
+
+        # Prepare content for Gemini
+        # Content can be a list of parts (text, image)
+        content_parts: List[Any] = []
+
+        # Text part is mandatory
+        content_parts.append(chat_message.message) # Gemini SDK can often infer this is text
+
+        # Image part (optional)
+        if chat_message.image_base64 and chat_message.image_mime_type:
+            try:
+                image_bytes = base64.b64decode(chat_message.image_base64)
+                image_part = {
+                    "mime_type": chat_message.image_mime_type,
+                    "data": image_bytes
+                }
+                content_parts.append(image_part)
+            except base64.binascii.Error as b64_error:
+                print(f"Error decoding base64 image: {b64_error}")
+                raise HTTPException(status_code=400, detail="Invalid base64 image data.")
+            except Exception as img_e: # Catch other potential errors with image data
+                print(f"Error processing image part: {img_e}")
+                raise HTTPException(status_code=400, detail="Could not process image data.")
+
+
+        print(f"Sending to Gemini, content_parts count: {len(content_parts)}")
+        # Example structure of content_parts:
+        # ["Describe this image.", {"mime_type": "image/jpeg", "data": <bytes>}]
+        # or just ["Tell me a joke."]
+
         # Send message to Gemini and get response
-        # Using chat_session to maintain context
-        response = chat_session.send_message(chat_message.message)
+        # The `chat_session.send_message` can take a list of parts directly
+        response = chat_session.send_message(content_parts)
+        
+        # If you were using gemini-pro-vision for a one-off:
+        # response = model_vision.generate_content(content_parts)
+
         print(f"Gemini response: {response.text}")
         return AIResponse(message=response.text)
+
     except Exception as e:
         print(f"Error during chat: {e}")
-        # You might want to check for specific Gemini API errors here
-        # For example, if response.prompt_feedback indicates blocking
-        if hasattr(e, 'prompt_feedback') and e.prompt_feedback.block_reason:
-             return AIResponse(message=f"Content blocked: {e.prompt_feedback.block_reason.name}")
-        raise HTTPException(status_code=500, detail=f"Error processing chat: {str(e)}")
+        # Check for specific Gemini API errors, like safety blocks
+        # The structure of error feedback can vary.
+        # For newer models/SDK versions, check response.prompt_feedback
+        if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+            for rating in response.prompt_feedback.safety_ratings:
+                if rating.blocked: # Or check rating.category and rating.probability
+                    block_reason = rating.category # Simplified
+                    print(f"Content blocked by Gemini due to: {block_reason}")
+                    # Return a more specific message to the user
+                    # The exact way to get block_reason might differ slightly based on SDK version
+                    return AIResponse(message=f"Content blocked by AI: {block_reason}. Please revise your prompt or image.")
+
+        # General error
+        detail_message = f"Error processing chat: {str(e)}"
+        if hasattr(e, 'message'): # For some google API errors
+            detail_message = e.message
+        
+        raise HTTPException(status_code=500, detail=detail_message)
+
+@app.post("/upload-image")
+async def upload_image(
+    patientid: int = Form(...), # MODIFIED: Receive patientid as Form data
+    file: UploadFile = File(...)
+):
+    try:
+        IMGUR_CLIENT_ID = "a88f57f1c0bc4fd" # Keep this secure, ideally from env variables
+        IMGUR_UPLOAD_ENDPOINT = "https://api.imgur.com/3/image"
+
+        contents = await file.read()
+        
+        img = PIL.Image.open(io.BytesIO(contents))
+
+        # Enhanced prompt for more robust JSON
+        prompt = f"""
+            Analyze the food items in the image.
+            Provide the main food item name and its estimated nutritional values for calories (in kcal), fat (in g), sodium (in mg, but your current code expects g, so I'll stick to g for consistency), and sugar (in g).
+            Respond ONLY with a valid JSON object in the following format and nothing else:
+            {{
+              "Food": "string",
+              "calories(kcal)": float_or_int,
+              "fat(g)": float_or_int,
+              "sodium(g)": float_or_int,
+              "sugar(g)": float_or_int
+            }}
+            If multiple distinct food items are clearly visible and separable, list the dominant one or a combined estimate.
+            If the image does not contain food, return a JSON with null or 0 values for nutrients and "Not a food item" for "Food".
+        """
+        
+        prompt_parts = [prompt, img]
+        
+        print(f"Sending prompt to Gemini for patient: {patientid}")
+        gemini_response = text_model.generate_content(prompt_parts) # Use a different variable name
+        answer = gemini_response.text.strip() # Strip whitespace
+
+        # Clean up potential markdown code blocks
+        answer = re.sub(r'^```json\s*', '', answer, flags=re.MULTILINE)
+        answer = re.sub(r'\s*```$', '', answer, flags=re.MULTILINE)
+        answer = answer.strip()
+
+        print(f"Raw Gemini response text: {answer}")
+
+        try:
+            answer_json = json.loads(answer)
+        except json.JSONDecodeError as e:
+            print(f"JSONDecodeError: {e}. Gemini response was: {answer}")
+            raise HTTPException(status_code=500, detail=f"AI model returned invalid JSON. Response: {answer}")
+
+        print(f"Parsed Gemini JSON: {answer_json}")
+
+        # Validate expected keys from Gemini (optional but good practice)
+        expected_keys = ["Food", "calories(kcal)", "fat(g)", "sodium(g)", "sugar(g)"]
+        for key in expected_keys:
+            if key not in answer_json:
+                print(f"Warning: Key '{key}' missing in Gemini response. Using None/0.")
+                # Provide default if a key is missing to avoid KeyError later
+                if "kcal" in key or "(g)" in key:
+                    answer_json[key] = 0 # Default to 0 for numerical values
+                else:
+                    answer_json[key] = "N/A" # Default for string values
+
+        print("Uploading to Imgur...")
+        headers = {"Authorization": f"Client-ID {IMGUR_CLIENT_ID}"}
+        imgur_resp = requests.post( # Use a different variable name
+            IMGUR_UPLOAD_ENDPOINT,
+            headers=headers,
+            files={"image": contents}
+        )
+        imgur_resp.raise_for_status() # Will raise an exception for 4XX/5XX status
+        image_link = imgur_resp.json()["data"]["link"]
+        answer_json["image_link"] = image_link
+        print(f"Imgur link: {image_link}")
+
+        now = datetime.now()
+        dt_string = now.strftime("%Y-%m-%d %H:%M:%S") 
+
+        table_ref = db.reference('diet_logs')
+        
+        new_diet_log = {
+            "PatientID": patientid,
+            "calorie_intake": answer_json.get("calories(kcal)", 0), # Use .get for safety
+            "datetime": dt_string,
+            "fat_intake": answer_json.get("fat(g)", 0),
+            "imagelink": image_link,
+            "notes": answer_json.get("Food", "N/A"),
+            "sodium_intake": answer_json.get("sodium(g)", 0),
+            "sugar_intake": answer_json.get("sugar(g)", 0)
+        }
+
+        print(f"Saving to Firebase: {new_diet_log}")
+        table_ref.push(new_diet_log)
+
+        return answer_json # This is what React Native receives
+    
+    except requests.exceptions.RequestException as e:
+        print(f"Imgur API request error: {e}")
+        raise HTTPException(status_code=503, detail=f"Error communicating with Image Hosting service: {str(e)}")
+    except PIL.UnidentifiedImageError:
+        print("Error: Cannot identify image file.")
+        raise HTTPException(status_code=400, detail="Invalid or corrupted image file.")
+    except Exception as e:
+        print(f"Error during image processing: {e}")
+        # Check for Gemini-specific blocking if applicable
+        if hasattr(e, 'prompt_feedback') and hasattr(e.prompt_feedback, 'block_reason') and e.prompt_feedback.block_reason:
+             # For this, you'd need a Pydantic model for the error response, or just return a dict
+             # return {"message": f"Content blocked: {e.prompt_feedback.block_reason.name}", "original_filename": file.filename or "unknown"}
+             raise HTTPException(status_code=400, detail=f"Content blocked by AI: {e.prompt_feedback.block_reason.name}")
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
 @app.post("/upload_image_and_ask", response_model=ImageAIResponse)
 async def upload_image_and_ask(
-    file: UploadFile = File(...),
-    prompt: str = Form("Analyze the image and format answer in the following json format:Food,calories(kcal), fat(g), sodium(g), sugar(g)") # Optional prompt from frontend
+    prompt: str ,
+    file: UploadFile = File(...)
 ):
     try:
         print(f"Received image: {file.filename}, prompt: {prompt}")
@@ -104,12 +278,6 @@ async def upload_image_and_ask(
         
         # Prepare image for Gemini Vision
         img = PIL.Image.open(io.BytesIO(contents))
-
-        prompt = f"""
-            Analyze the image and format answer in the following json format:
-            Food,calories(kcal), fat(g), sodium(g), sugar(g)
-
-        """
         
         prompt_parts = [prompt, img]
 
@@ -137,8 +305,6 @@ async def reset_chat_history():
 @app.get("/get-data")
 async def get_data():
     try:
-
-
         patient_ref = db.reference('patient_intake')
 
         all_intakes = patient_ref.get()
@@ -152,7 +318,7 @@ async def get_data():
 async def login_patient(req: LoginRequest):
 
     # 3a) Fetch patient_table
-    table_ref = db.reference('pat_table')
+    table_ref = db.reference('patient_table')
     raw = table_ref.get()
 
     if isinstance(raw, dict):
@@ -166,7 +332,7 @@ async def login_patient(req: LoginRequest):
     df = pd.DataFrame(records)
 
     # 3) Check if doctor exists and password is correct
-    patient_row = df[df["Email"] == req.patemail]
+    patient_row = df[df["Email"] == req.email]
     if not patient_row.empty and req.password == "123":
         # Convert the matching row to a dictionary
         patient_data = patient_row.iloc[0].to_dict()
@@ -185,7 +351,7 @@ class SignUpPatient(BaseModel):
 
 @app.post("/signup_pat")
 async def signup_pat(req: SignUpPatient):
-    table_ref = db.reference('pat_table')
+    table_ref = db.reference('patient_table')
     raw = table_ref.get()
 
     if isinstance(raw, dict):
@@ -195,7 +361,6 @@ async def signup_pat(req: SignUpPatient):
     else:
         records = []
 
-
     # 3) Turn into DataFrame
     df = pd.DataFrame(records)
     list_email = df["Email"].tolist()
@@ -204,16 +369,63 @@ async def signup_pat(req: SignUpPatient):
 
     if req.email in list_email :
         return {"success":False, "message":"Registration Invalid"}
-    
+  
     new_pat = {
-        "Age":req.age,
-        "Email":req.email,
-        "HealthCondition":"",
-        "PatientName":req.name,
-        "PatientID":pat_id,
-        "patient_status":""
+    "Age":req.age,
+    "Email":req.email,
+    "HealthCondition":"",
+    "PatientName":req.name,
+    "PatientID":pat_id,
+    "patient_status":""
     }
+
+        
 
     table_ref.push(new_pat)
     return {"success": True, "message": "Patient registered successfully!"}
 
+@app.get("/get_diet_logs")
+async def get_diet_logs(patientid: int = Query(...)):
+    raw = db.reference("diet_logs").get()
+    if isinstance(raw, dict):
+        records = list(raw.values())
+    elif isinstance(raw, list):
+        records = raw
+    else:
+        records = []
+
+    df = pd.DataFrame(records)
+    df = df[df["PatientID"] == patientid]
+    #print(records)
+    #print(df)
+    #print(df.columns)
+    return df.to_dict(orient="records")
+
+
+@app.get("/get_exercise_logs")
+async def get_exercise_logs(patientid: int = Query(...)):
+    raw = db.reference("exercise").get()
+    if isinstance(raw, dict):
+        records = list(raw.values())
+    elif isinstance(raw, list):
+        records = raw
+    else:
+        records = []
+    df = pd.DataFrame(records)
+    df = df[df["PatientID"] == patientid]
+    return df.to_dict(orient="records")
+
+
+@app.get("/get_diet_plan")
+async def get_diet_plan(patientid: int = Query(...)):
+    raw = db.reference("diet_plan_settings").get()
+    if isinstance(raw, dict):
+        records = list(raw.values())
+    elif isinstance(raw, list):
+        records = raw
+    else:
+        records = []
+
+    df = pd.DataFrame(records)
+    df = df[df["PatientID"] == patientid]
+    return df.to_dict(orient="records")
