@@ -1,6 +1,8 @@
 import os
 import requests
 import google.generativeai as genai
+from google.genai.types import GenerateContentConfig, HttpOptions
+
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Dict, Any # For Gemini parts
@@ -103,6 +105,7 @@ async def handle_chat(chat_message: ChatMessage):
         content_parts: List[Any] = []
 
         # Text part is mandatory
+        content_parts.append("Persona: You are a medical assistant AI who only answers medical/dietary based questions. Your mission is to educate everyone of different backgrounds and language on medical/dietary. You are not to explain about anything irrelevant. And you must NOT use bullet points or bold text")
         content_parts.append(chat_message.message) # Gemini SDK can often infer this is text
 
         # Image part (optional)
@@ -190,7 +193,7 @@ async def upload_image(
         prompt_parts = [prompt, img]
         
         print(f"Sending prompt to Gemini for patient: {patientid}")
-        gemini_response = text_model.generate_content(prompt_parts) # Use a different variable name
+        gemini_response = text_model.generate_content(prompt_parts)# Use a different variable name
         answer = gemini_response.text.strip() # Strip whitespace
 
         # Clean up potential markdown code blocks
@@ -429,3 +432,46 @@ async def get_diet_plan(patientid: int = Query(...)):
     df = pd.DataFrame(records)
     df = df[df["PatientID"] == patientid]
     return df.to_dict(orient="records")
+
+
+@app.get("/get_today_diet_log")
+async def get_today_diet_log(patientid: int = Query(...)):
+    # 1) Fetch raw logs
+    raw = db.reference("diet_logs").get()
+    if isinstance(raw, dict):
+        records = list(raw.values())
+    elif isinstance(raw, list):
+        records = raw
+    else:
+        records = []
+
+    # 2) Build DataFrame and filter by patient
+    df = pd.DataFrame(records)
+    df = df[df["PatientID"] == patientid]
+
+    # 3) Today's date
+    now = datetime.now()
+    todays_date = now.date()
+
+    # 4) Convert and extract date column
+    df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+    df["date"]     = df["datetime"].dt.date
+
+    # 5) Filter to only today’s entries
+    today_df = df[df["date"] == todays_date]
+
+    # 6) Sum totals (coerce NaN to 0)
+    total_calorie = int(today_df["calorie_intake"].sum() or 0)
+    total_fat     = float(today_df["fat_intake"].sum() or 0.0)
+    total_sodium  = float(today_df["sodium_intake"].sum() or 0.0)
+    total_sugar   = float(today_df["sugar_intake"].sum() or 0.0)
+
+    # 7) Return as JSON
+    return {
+        "patientid": patientid,
+        "date": str(todays_date),
+        "total_calorie": total_calorie,
+        "total_fat": round(total_fat, 2),
+        "total_sodium": round(total_sodium, 2),
+        "total_sugar": round(total_sugar, 2),
+    }
