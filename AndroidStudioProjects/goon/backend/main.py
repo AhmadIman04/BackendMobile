@@ -475,3 +475,42 @@ async def get_today_diet_log(patientid: int = Query(...)):
         "total_sodium": round(total_sodium, 2),
         "total_sugar": round(total_sugar, 2),
     }
+
+@app.get("/get_nutrient_trend_phone_week")
+async def get_nutrient_trend_phone_week(patientid: int = Query(...)):
+    # 1) Fetch raw diet logs
+    raw = db.reference("diet_logs").get() or {}
+    records = list(raw.values()) if isinstance(raw, dict) else raw
+
+    # 2) Build DataFrame and filter by patient
+    df = pd.DataFrame(records)
+    df = df[df["PatientID"] == patientid]
+    df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce')
+    df['day'] = df['datetime'].dt.day_name()
+    df['date'] = df['datetime'].dt.date
+
+    # 3) Compute date range: from 6 days ago up to today
+    today = datetime.now().date()
+    seven_days_ago = today - timedelta(days=6)
+
+    # 4) Filter DataFrame to the past 7 days
+    mask = (df['date'] >= seven_days_ago) & (df['date'] <= today)
+    week_df = df.loc[mask]
+
+    # 5) Group by date and sum each nutrient
+    grouped = week_df.groupby('date')[
+        ['sodium_intake', 'sugar_intake', 'fat_intake', 'calorie_intake']
+    ].sum().round(2).reset_index()
+
+    # 6) Add day name column
+    grouped['day'] = pd.to_datetime(grouped['date']).dt.day_name()
+
+    # 7) Convert to list-of-dicts for JSON
+    trend_list = grouped.to_dict(orient='records')
+
+    return {
+        "patientid": patientid,
+        "from": str(seven_days_ago),
+        "to": str(today),
+        "trend": trend_list
+    }
